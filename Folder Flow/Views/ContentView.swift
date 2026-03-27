@@ -2,13 +2,14 @@ import SwiftUI
 import Combine
 
 enum AppTab: CaseIterable {
-    case fileExplorer, imageOrganizer, fileRenamer
+    case fileExplorer, imageOrganizer, fileRenamer, archiveCleaner
 
     var label: String {
         switch self {
         case .fileExplorer:   return "파일 탐색기"
         case .imageOrganizer: return "이미지 정리"
         case .fileRenamer:    return "이름 변경"
+        case .archiveCleaner: return "압축 삭제"
         }
     }
 
@@ -17,6 +18,7 @@ enum AppTab: CaseIterable {
         case .fileExplorer:   return "folder"
         case .imageOrganizer: return "photo.stack"
         case .fileRenamer:    return "pencil.and.list.clipboard"
+        case .archiveCleaner: return "archivebox"
         }
     }
 }
@@ -96,6 +98,10 @@ struct ContentView: View {
 
         case .fileRenamer:
             FileRenamerView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        case .archiveCleaner:
+            ArchiveCleanerView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
