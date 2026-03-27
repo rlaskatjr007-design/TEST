@@ -26,7 +26,7 @@ struct PanelGridView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            ForEach([1, 2, 3, 4], id: \.self) { count in
+            ForEach([1, 2], id: \.self) { count in
                 Button {
                     appViewModel.setPanelCount(count)
                 } label: {

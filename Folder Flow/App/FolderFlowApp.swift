@@ -5,7 +5,7 @@ struct FolderFlowApp: App {
     @StateObject private var appViewModel = AppViewModel()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Folder Flow") {
             ContentView()
                 .environmentObject(appViewModel)
                 .preferredColorScheme(.light)

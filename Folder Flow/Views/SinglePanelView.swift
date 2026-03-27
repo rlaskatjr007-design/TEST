@@ -9,11 +9,13 @@ struct SinglePanelView: View {
     @State private var isDropTargeted = false
     @State private var groupByExtension = false
     @State private var selection: Set<UUID> = []
-    @State private var clickFlash = false
+    @State private var hoverBack = false
+    @State private var hoverForward = false
+    @State private var sortOrder = [KeyPathComparator<FileItem>(\FileItem.name)]
 
     private var isActive: Bool { appViewModel.activePanelID == panel.id }
 
-    private var sortedItems: [FileItem] { panel.items }
+    private var sortedItems: [FileItem] { panel.items.sorted(using: sortOrder) }
 
     private var groupedItems: [(String, [FileItem])] {
         let grouped = Dictionary(grouping: panel.items, by: \.fileGroupName)
@@ -49,8 +51,6 @@ struct SinglePanelView: View {
             panelContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { activate() })
         .overlay(Rectangle().stroke(Color.green, lineWidth: isDropTargeted ? 3 : 0))
         .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
             guard let destURL = panel.currentURL else { return false }
@@ -109,19 +109,33 @@ struct SinglePanelView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 14, weight: .medium))
                         .frame(width: 32, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(hoverBack && panel.canGoBack
+                                      ? Color.primary.opacity(0.1)
+                                      : Color.clear)
+                        )
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(panel.canGoBack ? .primary : Color(NSColor.tertiaryLabelColor))
                 .disabled(!panel.canGoBack)
+                .onHover { hoverBack = $0 }
 
                 Button { panel.goForward() } label: {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 14, weight: .medium))
                         .frame(width: 32, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(hoverForward && panel.canGoForward
+                                      ? Color.primary.opacity(0.1)
+                                      : Color.clear)
+                        )
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(panel.canGoForward ? .primary : Color(NSColor.tertiaryLabelColor))
                 .disabled(!panel.canGoForward)
+                .onHover { hoverForward = $0 }
             }
             .background(Color(NSColor.controlBackgroundColor).cornerRadius(6))
 
@@ -150,13 +164,19 @@ struct SinglePanelView: View {
                 .help(groupByExtension ? "목록 보기" : "확장자별 그룹 보기")
 
                 Button { panel.refresh() } label: {
-                    Image(systemName: "arrow.clockwise").font(.caption)
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.secondary)
 
                 Button { openFolderPanel() } label: {
-                    Image(systemName: "folder.badge.plus").font(.caption)
+                    Image(systemName: "folder.badge.plus")
+                        .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.secondary)
@@ -164,15 +184,7 @@ struct SinglePanelView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(
-            ZStack {
-                isActive ? Color.accentColor.opacity(0.12) : Color(NSColor.windowBackgroundColor)
-                // 클릭 플래시 효과
-                if clickFlash {
-                    Color.accentColor.opacity(0.25)
-                }
-            }
-        )
+        .background(isActive ? Color.accentColor.opacity(0.12) : Color(NSColor.windowBackgroundColor))
         .contentShape(Rectangle())
         .onTapGesture { activate() }
     }
@@ -214,8 +226,8 @@ struct SinglePanelView: View {
     // MARK: - Table view
 
     private var tableView: some View {
-        Table(sortedItems, selection: $selection) {
-            TableColumn("이름") { (item: FileItem) in
+        Table(sortedItems, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("이름", value: \FileItem.name) { (item: FileItem) in
                 HStack(spacing: 6) {
                     Image(nsImage: icon(for: item))
                         .resizable()
@@ -227,43 +239,44 @@ struct SinglePanelView: View {
                         .truncationMode(.middle)
                     Spacer()
                 }
-                .simultaneousGesture(
-                    TapGesture(count: 2).onEnded { handleOpen(item) }
-                )
-                .onDrag {
-                    appViewModel.startDrag(item: item, fromPanelID: panel.id,
-                                           selection: selection, allItems: sortedItems)
-                    return NSItemProvider(object: item.url as NSURL)
-                }
+                .onTapGesture(count: 2) { handleOpen(item) }
+                .onDrag { dragProvider(for: item) }
             }
 
-            TableColumn("확장자") { (item: FileItem) in
+            TableColumn("확장자", value: \FileItem.fileExtension) { (item: FileItem) in
                 Text(item.isDirectory ? "폴더" : (item.fileExtension.isEmpty ? "—" : item.fileExtension))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
+                    .onDrag { dragProvider(for: item) }
             }
             .width(min: 40, ideal: 60, max: 90)
 
-            TableColumn("수정일") { (item: FileItem) in
+            TableColumn("수정일", value: \FileItem.sortDate) { (item: FileItem) in
                 Text(item.modificationDate.map { Self.dateFormatter.string(from: $0) } ?? "—")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
+                    .onDrag { dragProvider(for: item) }
             }
             .width(min: 80, ideal: 130)
 
-            TableColumn("크기") { (item: FileItem) in
+            TableColumn("크기", value: \FileItem.sortSize) { (item: FileItem) in
                 Text(item.formattedSize)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
+                    .onDrag { dragProvider(for: item) }
             }
             .width(min: 50, ideal: 70)
         }
-        .onChange(of: selection) { _ in
-            activate()
-        }
+        .onChange(of: selection) { _ in activate() }
         .contextMenu(forSelectionType: UUID.self) { ids in
             tableContextMenu(for: ids)
         }
+    }
+
+    private func dragProvider(for item: FileItem) -> NSItemProvider {
+        appViewModel.startDrag(item: item, fromPanelID: panel.id,
+                               selection: selection, allItems: sortedItems)
+        return NSItemProvider(object: item.url as NSURL)
     }
 
     // MARK: - Extension grouped view
@@ -436,11 +449,6 @@ struct SinglePanelView: View {
 
     private func activate() {
         appViewModel.activatePanel(panel)
-        guard !clickFlash else { return }
-        withAnimation(.easeOut(duration: 0.12)) { clickFlash = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            withAnimation(.easeOut(duration: 0.18)) { clickFlash = false }
-        }
     }
 
     // MARK: - Helpers
@@ -450,7 +458,7 @@ struct SinglePanelView: View {
         else { NSWorkspace.shared.open(item.url) }
     }
 
-    private func icon(for item: FileItem) -> NSImage {
+private func icon(for item: FileItem) -> NSImage {
         if item.isDirectory { return NSWorkspace.shared.icon(for: .folder) }
         if !item.fileExtension.isEmpty,
            let uti = UTType(filenameExtension: item.fileExtension) {
@@ -472,6 +480,7 @@ struct SinglePanelView: View {
         panel.navigate(to: url)
     }
 }
+
 
 #Preview("빈 패널") {
     let vm = AppViewModel()
