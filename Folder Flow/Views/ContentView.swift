@@ -2,17 +2,21 @@ import SwiftUI
 import Combine
 
 struct ContentView: View {
-    @StateObject private var viewModel = FileViewModel()
+    @EnvironmentObject var appViewModel: AppViewModel
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(viewModel: viewModel)
-        } detail: {
-            PanelView(viewModel: viewModel)
+        HStack(spacing: 0) {
+            SidebarView()
+                .frame(width: 220)
+            Divider()
+            PanelGridView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 #Preview {
     ContentView()
+        .environmentObject(AppViewModel())
 }
