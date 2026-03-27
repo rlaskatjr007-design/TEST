@@ -9,6 +9,7 @@ struct SinglePanelView: View {
     @State private var isDropTargeted = false
     @State private var groupByExtension = false
     @State private var selection: Set<UUID> = []
+    @State private var clickFlash = false
 
     private var isActive: Bool { appViewModel.activePanelID == panel.id }
 
@@ -49,19 +50,15 @@ struct SinglePanelView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { appViewModel.activatePanel(panel) })
+        .simultaneousGesture(TapGesture().onEnded { activate() })
         .overlay(Rectangle().stroke(Color.green, lineWidth: isDropTargeted ? 3 : 0))
-        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
+        .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
             guard let destURL = panel.currentURL else { return false }
             for provider in providers {
-                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
-                    var fileURL: URL?
-                    if let data = item as? Data     { fileURL = URL(dataRepresentation: data, relativeTo: nil) }
-                    else if let url = item as? URL  { fileURL = url }
-                    else if let ns = item as? NSURL { fileURL = ns as URL }
-                    guard let src = fileURL else { return }
+                _ = provider.loadObject(ofClass: NSURL.self) { object, _ in
+                    guard let url = object as? URL, url.isFileURL else { return }
                     DispatchQueue.main.async {
-                        appViewModel.completeDrop(sourceURL: src, to: destURL, destinationPanel: panel)
+                        appViewModel.completeDrop(sourceURL: url, to: destURL, destinationPanel: panel)
                     }
                 }
             }
@@ -167,7 +164,17 @@ struct SinglePanelView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(isActive ? Color.accentColor.opacity(0.12) : Color(NSColor.windowBackgroundColor))
+        .background(
+            ZStack {
+                isActive ? Color.accentColor.opacity(0.12) : Color(NSColor.windowBackgroundColor)
+                // 클릭 플래시 효과
+                if clickFlash {
+                    Color.accentColor.opacity(0.25)
+                }
+            }
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { activate() }
     }
 
     // MARK: - Path bar
@@ -184,6 +191,8 @@ struct SinglePanelView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
                 .background(Color(NSColor.controlBackgroundColor))
+                .contentShape(Rectangle())
+                .onTapGesture { activate() }
         }
     }
 
@@ -222,7 +231,8 @@ struct SinglePanelView: View {
                     TapGesture(count: 2).onEnded { handleOpen(item) }
                 )
                 .onDrag {
-                    appViewModel.startDrag(item: item, fromPanelID: panel.id)
+                    appViewModel.startDrag(item: item, fromPanelID: panel.id,
+                                           selection: selection, allItems: sortedItems)
                     return NSItemProvider(object: item.url as NSURL)
                 }
             }
@@ -249,7 +259,7 @@ struct SinglePanelView: View {
             .width(min: 50, ideal: 70)
         }
         .onChange(of: selection) { _ in
-            appViewModel.activatePanel(panel)
+            activate()
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             tableContextMenu(for: ids)
@@ -293,7 +303,8 @@ struct SinglePanelView: View {
                                     })
                             )
                             .onDrag {
-                                appViewModel.startDrag(item: item, fromPanelID: panel.id)
+                                appViewModel.startDrag(item: item, fromPanelID: panel.id,
+                                                       selection: [item.id], allItems: [item])
                                 return NSItemProvider(object: item.url as NSURL)
                             }
                             .contextMenu {
@@ -418,6 +429,17 @@ struct SinglePanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contextMenu {
             backgroundContextMenuContent
+        }
+    }
+
+    // MARK: - Activation
+
+    private func activate() {
+        appViewModel.activatePanel(panel)
+        guard !clickFlash else { return }
+        withAnimation(.easeOut(duration: 0.12)) { clickFlash = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            withAnimation(.easeOut(duration: 0.18)) { clickFlash = false }
         }
     }
 

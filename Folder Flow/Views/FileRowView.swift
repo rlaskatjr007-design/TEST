@@ -57,7 +57,8 @@ struct FileRowView: View {
                 .exclusively(before: TapGesture(count: 1).onEnded { onActivate() })
         )
         .onDrag {
-            appViewModel.startDrag(item: item, fromPanelID: panelID)
+            appViewModel.startDrag(item: item, fromPanelID: panelID,
+                                   selection: [item.id], allItems: [item])
             return NSItemProvider(object: item.url as NSURL)
         }
     }

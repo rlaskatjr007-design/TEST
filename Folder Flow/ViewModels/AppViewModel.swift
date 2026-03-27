@@ -8,8 +8,9 @@ class AppViewModel: ObservableObject {
     @Published var activePanelID: UUID?
     @Published var volumes: [URL] = []
 
-    // Drag state — set from FileRowView.onDrag, read in SinglePanelView.onDrop
+    // Drag state — set from onDrag, read in onDrop
     private(set) var draggingFromPanelID: UUID?
+    private(set) var pendingDragURLs: [URL] = []
 
     var activePanel: PanelState? {
         panels.first { $0.id == activePanelID }
@@ -69,28 +70,47 @@ class AppViewModel: ObservableObject {
 
     // MARK: - Drag & Drop
 
-    func startDrag(item: FileItem, fromPanelID: UUID) {
+    /// selection이 2개 이상이고 드래그한 item이 선택에 포함되면 전체 선택 이동
+    func startDrag(item: FileItem, fromPanelID: UUID, selection: Set<UUID>, allItems: [FileItem]) {
         draggingFromPanelID = fromPanelID
+        if selection.contains(item.id) && selection.count > 1 {
+            pendingDragURLs = allItems.filter { selection.contains($0.id) }.map(\.url)
+        } else {
+            pendingDragURLs = [item.url]
+        }
     }
 
     func completeDrop(sourceURL: URL, to destinationDir: URL, destinationPanel: PanelState) {
-        let src = sourceURL.deletingLastPathComponent().standardizedFileURL
-        let dst = destinationDir.standardizedFileURL
-        guard src != dst else { return }
+        // 앱 내부 멀티 드래그: sourceURL이 pendingDragURLs에 있으면 전체 이동
+        let urlsToMove: [URL]
+        if pendingDragURLs.contains(sourceURL) {
+            urlsToMove = pendingDragURLs
+        } else {
+            // 외부 드래그(Finder 등): 단일 파일만 처리
+            urlsToMove = [sourceURL]
+        }
+        pendingDragURLs = []
 
-        let destURL = destinationDir.appendingPathComponent(sourceURL.lastPathComponent)
-        do {
-            try FileManager.default.moveItem(at: sourceURL, to: destURL)
-        } catch {
-            let name = sourceURL.deletingPathExtension().lastPathComponent
-            let ext = sourceURL.pathExtension
-            let newName = ext.isEmpty ? "\(name) 복사본" : "\(name) 복사본.\(ext)"
-            let fallback = destinationDir.appendingPathComponent(newName)
-            try? FileManager.default.moveItem(at: sourceURL, to: fallback)
+        let dst = destinationDir.standardizedFileURL
+        let fm = FileManager.default
+        for src in urlsToMove {
+            guard src.deletingLastPathComponent().standardizedFileURL != dst else { continue }
+            var dest = destinationDir.appendingPathComponent(src.lastPathComponent)
+            if fm.fileExists(atPath: dest.path) {
+                let name = src.deletingPathExtension().lastPathComponent
+                let ext  = src.pathExtension
+                var counter = 2
+                repeat {
+                    dest = destinationDir.appendingPathComponent(
+                        ext.isEmpty ? "\(name) \(counter)" : "\(name) \(counter).\(ext)"
+                    )
+                    counter += 1
+                } while fm.fileExists(atPath: dest.path)
+            }
+            try? fm.moveItem(at: src, to: dest)
         }
 
         destinationPanel.refresh()
-
         if let fromID = draggingFromPanelID,
            let sourcePanel = panels.first(where: { $0.id == fromID }) {
             sourcePanel.refresh()
