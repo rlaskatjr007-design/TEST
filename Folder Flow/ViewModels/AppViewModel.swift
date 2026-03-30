@@ -42,6 +42,10 @@ class AppViewModel: ObservableObject {
     }
 
     func activatePanel(_ panel: PanelState) {
+        // 이전 패널의 selection 초기화
+        if let prev = activePanel, prev.id != panel.id {
+            prev.selectedIDs = []
+        }
         activePanelID = panel.id
     }
 

@@ -5,6 +5,7 @@ class PanelState: ObservableObject, Identifiable {
     let id = UUID()
     @Published var currentURL: URL?
     @Published var items: [FileItem] = []
+    @Published var selectedIDs: Set<UUID> = []
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
 
@@ -28,6 +29,7 @@ class PanelState: ObservableObject, Identifiable {
         historyIndex = history.count - 1
         updateNavState()
         currentURL = url
+        selectedIDs = []
         loadContents()
     }
 

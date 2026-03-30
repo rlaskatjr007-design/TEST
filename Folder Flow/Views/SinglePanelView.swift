@@ -8,7 +8,6 @@ struct SinglePanelView: View {
     @ObservedObject var panel: PanelState
     @State private var isDropTargeted = false
     @State private var groupByExtension = false
-    @State private var selection: Set<UUID> = []
     @State private var hoverBack = false
     @State private var hoverForward = false
     @State private var sortOrder = [KeyPathComparator<FileItem>(\FileItem.name)]
@@ -73,12 +72,12 @@ struct SinglePanelView: View {
         Group {
             // Cmd+C — 선택 파일 복사
             Button("") {
-                let urls = sortedItems.filter { selection.contains($0.id) }.map(\.url)
+                let urls = sortedItems.filter { panel.selectedIDs.contains($0.id) }.map(\.url)
                 guard !urls.isEmpty else { return }
                 appViewModel.copyFiles(urls)
             }
             .keyboardShortcut("c", modifiers: .command)
-            .disabled(!isActive || selection.isEmpty)
+            .disabled(!isActive || panel.selectedIDs.isEmpty)
 
             // Cmd+V — 현재 폴더에 붙여넣기
             Button("") {
@@ -90,12 +89,12 @@ struct SinglePanelView: View {
 
             // Cmd+Delete — 휴지통으로 이동
             Button("") {
-                sortedItems.filter { selection.contains($0.id) }
+                sortedItems.filter { panel.selectedIDs.contains($0.id) }
                     .forEach { appViewModel.moveToTrash($0.url, panel: panel) }
-                selection = []
+                panel.selectedIDs = []
             }
             .keyboardShortcut(.delete, modifiers: .command)
-            .disabled(!isActive || selection.isEmpty)
+            .disabled(!isActive || panel.selectedIDs.isEmpty)
         }
         .opacity(0)
     }
@@ -226,7 +225,7 @@ struct SinglePanelView: View {
     // MARK: - Table view
 
     private var tableView: some View {
-        Table(sortedItems, selection: $selection, sortOrder: $sortOrder) {
+        Table(sortedItems, selection: $panel.selectedIDs, sortOrder: $sortOrder) {
             TableColumn("이름", value: \FileItem.name) { (item: FileItem) in
                 HStack(spacing: 6) {
                     Image(nsImage: icon(for: item))
@@ -239,7 +238,9 @@ struct SinglePanelView: View {
                         .truncationMode(.middle)
                     Spacer()
                 }
-                .onTapGesture(count: 2) { handleOpen(item) }
+                // 더블클릭만 simultaneousGesture로 처리.
+                // 단일클릭은 NSTableView 네이티브 selection에 맡겨야 하이라이트가 정상 동작함.
+                .simultaneousGesture(TapGesture(count: 2).onEnded { handleOpen(item) })
                 .onDrag { dragProvider(for: item) }
             }
 
@@ -267,7 +268,9 @@ struct SinglePanelView: View {
             }
             .width(min: 50, ideal: 70)
         }
-        .onChange(of: selection) { _ in activate() }
+        .onChange(of: panel.selectedIDs) { newSelection in
+            if !newSelection.isEmpty { activate() }
+        }
         .contextMenu(forSelectionType: UUID.self) { ids in
             tableContextMenu(for: ids)
         }
@@ -275,7 +278,7 @@ struct SinglePanelView: View {
 
     private func dragProvider(for item: FileItem) -> NSItemProvider {
         appViewModel.startDrag(item: item, fromPanelID: panel.id,
-                               selection: selection, allItems: sortedItems)
+                               selection: panel.selectedIDs, allItems: sortedItems)
         return NSItemProvider(object: item.url as NSURL)
     }
 
@@ -308,10 +311,16 @@ struct SinglePanelView: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 5)
+                            .background(
+                                panel.selectedIDs.contains(item.id)
+                                    ? Color.accentColor.opacity(0.25)
+                                    : Color.clear
+                            )
                             .contentShape(Rectangle())
                             .gesture(
                                 TapGesture(count: 2).onEnded { handleOpen(item) }
                                     .exclusively(before: TapGesture(count: 1).onEnded {
+                                        panel.selectedIDs = [item.id]
                                         appViewModel.activatePanel(panel)
                                     })
                             )
@@ -366,7 +375,7 @@ struct SinglePanelView: View {
                 Divider()
                 Button("휴지통으로 이동", role: .destructive) {
                     appViewModel.moveToTrash(item.url, panel: panel)
-                    selection = []
+                    panel.selectedIDs = []
                 }
             } else {
                 Button("\(items.count)개 항목 열기") { items.forEach { handleOpen($0) } }
@@ -375,7 +384,7 @@ struct SinglePanelView: View {
                 Divider()
                 Button("휴지통으로 이동 (\(items.count)개)", role: .destructive) {
                     items.forEach { appViewModel.moveToTrash($0.url, panel: panel) }
-                    selection = []
+                    panel.selectedIDs = []
                 }
             }
         }
@@ -454,8 +463,13 @@ struct SinglePanelView: View {
     // MARK: - Helpers
 
     private func handleOpen(_ item: FileItem) {
-        if item.isDirectory { panel.navigate(to: item.url) }
-        else { NSWorkspace.shared.open(item.url) }
+        // NSTableView doubleAction 경로: selection은 NSTableView가 이미 설정
+        // 그룹 뷰 경로: 호출 전에 selection을 수동으로 설정함
+        if item.isDirectory {
+            panel.navigate(to: item.url)
+        } else {
+            NSWorkspace.shared.open(item.url)
+        }
     }
 
 private func icon(for item: FileItem) -> NSImage {
@@ -480,6 +494,7 @@ private func icon(for item: FileItem) -> NSImage {
         panel.navigate(to: url)
     }
 }
+
 
 
 #Preview("빈 패널") {
