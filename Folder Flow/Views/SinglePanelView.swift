@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import UniformTypeIdentifiers
 import AppKit
+import Quartz
 
 struct SinglePanelView: View {
     @EnvironmentObject var appViewModel: AppViewModel
@@ -15,6 +16,10 @@ struct SinglePanelView: View {
     private var isActive: Bool { appViewModel.activePanelID == panel.id }
 
     private var sortedItems: [FileItem] { panel.items.sorted(using: sortOrder) }
+
+    private var selectedURLs: [URL] {
+        panel.items.filter { panel.selectedIDs.contains($0.id) }.map(\.url)
+    }
 
     private var groupedItems: [(String, [FileItem])] {
         let grouped = Dictionary(grouping: panel.items, by: \.fileGroupName)
@@ -64,6 +69,7 @@ struct SinglePanelView: View {
             return true
         }
         .background(keyboardShortcutOverlay)
+        .background(QuickLookHelper(selectedURLs: selectedURLs, isActive: isActive))
     }
 
     // MARK: - Keyboard Shortcuts (hidden overlay, active panel only)
@@ -652,6 +658,80 @@ private struct ContentShapeIfSelected: ViewModifier {
             content.contentShape(Rectangle())
         } else {
             content
+        }
+    }
+}
+
+// MARK: - Quick Look Helper
+//
+// 스페이스바(keyCode 49) 감지 → QLPreviewPanel 열기/닫기
+// 활성 패널에서만 동작하며, 선택 파일이 바뀌면 패널 내용도 자동 갱신
+private struct QuickLookHelper: NSViewRepresentable {
+    var selectedURLs: [URL]
+    var isActive: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.selectedURLs = selectedURLs
+        context.coordinator.isActive = isActive
+
+        // 패널이 열려 있고 내가 데이터소스라면 선택 변경 즉시 반영
+        if QLPreviewPanel.sharedPreviewPanelExists() {
+            let panel = QLPreviewPanel.shared()!
+            if panel.isVisible, panel.dataSource === context.coordinator {
+                panel.reloadData()
+            }
+        }
+
+        guard context.coordinator.keyMonitor == nil else { return }
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak coord = context.coordinator] event in
+            guard let coord = coord, coord.isActive else { return event }
+            if event.keyCode == 49 { // spacebar
+                coord.toggleQuickLook()
+                return nil // 이벤트 소비 (다른 뷰로 전달 안 함)
+            }
+            return event
+        }
+        context.coordinator.keyMonitor = monitor
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        if let monitor = coordinator.keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            coordinator.keyMonitor = nil
+        }
+        if QLPreviewPanel.sharedPreviewPanelExists() {
+            let panel = QLPreviewPanel.shared()!
+            if panel.dataSource === coordinator { panel.orderOut(nil) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, QLPreviewPanelDataSource {
+        var selectedURLs: [URL] = []
+        var isActive: Bool = false
+        var keyMonitor: Any?
+
+        func toggleQuickLook() {
+            let panel = QLPreviewPanel.shared()!
+            if panel.isVisible {
+                panel.orderOut(nil)
+            } else {
+                guard !selectedURLs.isEmpty else { return }
+                panel.dataSource = self
+                panel.reloadData()
+                panel.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        // MARK: QLPreviewPanelDataSource
+        func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+            selectedURLs.count
+        }
+        func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+            selectedURLs[index] as NSURL
         }
     }
 }
