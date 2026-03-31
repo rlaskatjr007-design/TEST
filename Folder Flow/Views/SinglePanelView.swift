@@ -95,6 +95,14 @@ struct SinglePanelView: View {
             }
             .keyboardShortcut(.delete, modifiers: .command)
             .disabled(!isActive || panel.selectedIDs.isEmpty)
+
+            // Return — 선택 항목 열기 (폴더: 진입 / 파일: 앱으로 열기)
+            Button("") {
+                guard let item = sortedItems.first(where: { panel.selectedIDs.contains($0.id) }) else { return }
+                handleOpen(item)
+            }
+            .keyboardShortcut(.return, modifiers: [])
+            .disabled(!isActive || panel.selectedIDs.isEmpty)
         }
         .opacity(0)
     }
@@ -162,15 +170,6 @@ struct SinglePanelView: View {
                 .foregroundColor(groupByExtension ? .accentColor : .secondary)
                 .help(groupByExtension ? "목록 보기" : "확장자별 그룹 보기")
 
-                Button { panel.refresh() } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-
                 Button { openFolderPanel() } label: {
                     Image(systemName: "folder.badge.plus")
                         .font(.caption)
@@ -226,7 +225,12 @@ struct SinglePanelView: View {
 
     private var tableView: some View {
         Table(sortedItems, selection: $panel.selectedIDs, sortOrder: $sortOrder) {
+            // .onDrag는 SwiftUI .onDrop과 완벽 연동됨 (AppKit beginDraggingSession은 .onDrop과 호환 안됨)
+            // mouseDown 선택은 TableSetup NSEvent 모니터가 NSTableView에 강제 적용
             TableColumn("이름", value: \FileItem.name) { (item: FileItem) in
+                // 선택된 행: Spacer 포함 전체 너비 드래그 가능 (contentShape)
+                // 미선택 행: 아이콘+텍스트 영역만 드래그 가능 (여백은 드래그 불가)
+                let isSelected = panel.selectedIDs.contains(item.id)
                 HStack(spacing: 6) {
                     Image(nsImage: icon(for: item))
                         .resizable()
@@ -238,33 +242,61 @@ struct SinglePanelView: View {
                         .truncationMode(.middle)
                     Spacer()
                 }
-                // 더블클릭만 simultaneousGesture로 처리.
-                // 단일클릭은 NSTableView 네이티브 selection에 맡겨야 하이라이트가 정상 동작함.
-                .simultaneousGesture(TapGesture(count: 2).onEnded { handleOpen(item) })
-                .onDrag { dragProvider(for: item) }
+                .frame(maxWidth: .infinity)
+                .modifier(ContentShapeIfSelected(selected: isSelected))
+                .onDrag {
+                    let sel = isSelected ? panel.selectedIDs : [item.id]
+                    appViewModel.startDrag(item: item, fromPanelID: panel.id,
+                                           selection: sel, allItems: sortedItems)
+                    return NSItemProvider(object: item.url as NSURL)
+                }
             }
 
             TableColumn("확장자", value: \FileItem.fileExtension) { (item: FileItem) in
+                let isSelected = panel.selectedIDs.contains(item.id)
                 Text(item.isDirectory ? "폴더" : (item.fileExtension.isEmpty ? "—" : item.fileExtension))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
-                    .onDrag { dragProvider(for: item) }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .modifier(ContentShapeIfSelected(selected: isSelected))
+                    .onDrag {
+                        let sel = isSelected ? panel.selectedIDs : [item.id]
+                        appViewModel.startDrag(item: item, fromPanelID: panel.id,
+                                               selection: sel, allItems: sortedItems)
+                        return NSItemProvider(object: item.url as NSURL)
+                    }
             }
             .width(min: 40, ideal: 60, max: 90)
 
             TableColumn("수정일", value: \FileItem.sortDate) { (item: FileItem) in
+                let isSelected = panel.selectedIDs.contains(item.id)
                 Text(item.modificationDate.map { Self.dateFormatter.string(from: $0) } ?? "—")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
-                    .onDrag { dragProvider(for: item) }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .modifier(ContentShapeIfSelected(selected: isSelected))
+                    .onDrag {
+                        let sel = isSelected ? panel.selectedIDs : [item.id]
+                        appViewModel.startDrag(item: item, fromPanelID: panel.id,
+                                               selection: sel, allItems: sortedItems)
+                        return NSItemProvider(object: item.url as NSURL)
+                    }
             }
             .width(min: 80, ideal: 130)
 
             TableColumn("크기", value: \FileItem.sortSize) { (item: FileItem) in
+                let isSelected = panel.selectedIDs.contains(item.id)
                 Text(item.formattedSize)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
-                    .onDrag { dragProvider(for: item) }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .modifier(ContentShapeIfSelected(selected: isSelected))
+                    .onDrag {
+                        let sel = isSelected ? panel.selectedIDs : [item.id]
+                        appViewModel.startDrag(item: item, fromPanelID: panel.id,
+                                               selection: sel, allItems: sortedItems)
+                        return NSItemProvider(object: item.url as NSURL)
+                    }
             }
             .width(min: 50, ideal: 70)
         }
@@ -274,12 +306,9 @@ struct SinglePanelView: View {
         .contextMenu(forSelectionType: UUID.self) { ids in
             tableContextMenu(for: ids)
         }
-    }
-
-    private func dragProvider(for item: FileItem) -> NSItemProvider {
-        appViewModel.startDrag(item: item, fromPanelID: panel.id,
-                               selection: panel.selectedIDs, allItems: sortedItems)
-        return NSItemProvider(object: item.url as NSURL)
+        .background(
+            TableSetup(items: sortedItems, onDoubleClick: handleOpen)
+        )
     }
 
     // MARK: - Extension grouped view
@@ -496,6 +525,136 @@ private func icon(for item: FileItem) -> NSImage {
 }
 
 
+
+// MARK: - NSTableView 더블클릭 + 선택 헬퍼
+//
+// [더블클릭] NSTableView.doubleAction selector
+// [선택]     .onDrag가 NSHostingView mouseDown을 캡처해 NSTableView가 row를 못 선택하므로
+//            NSEvent 로컬 모니터로 mouseDown을 감지, NSTableView에 직접 selectRowIndexes 강제 적용
+// [드래그]   셀의 .onDrag가 처리 (SwiftUI .onDrop과 완벽 연동)
+//
+// findNearestTableView: SwiftUI 내부 wrapper 때문에 직접 형제 탐색이 실패하므로
+// 윈도우 전체 NSTableView 중 공통 조상 거리가 가장 가까운 것을 선택.
+private struct TableSetup: NSViewRepresentable {
+    var items: [FileItem]
+    var onDoubleClick: (FileItem) -> Void
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onDoubleClick = onDoubleClick
+        context.coordinator.items = items
+
+        DispatchQueue.main.async {
+            guard let tv = TableSetup.findNearestTableView(from: nsView) else { return }
+            tv.target = context.coordinator
+            tv.doubleAction = #selector(Coordinator.rowDoubleClicked(_:))
+
+            guard context.coordinator.eventMonitor == nil else { return }
+            context.coordinator.tableView = tv
+
+            let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak coord = context.coordinator] event in
+                coord?.handleMouseDown(event: event)
+                return event
+            }
+            context.coordinator.eventMonitor = monitor
+        }
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        if let monitor = coordinator.eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            coordinator.eventMonitor = nil
+        }
+    }
+
+    private static func findNearestTableView(from nsView: NSView) -> NSTableView? {
+        guard let root = nsView.window?.contentView else { return nil }
+        var all: [NSTableView] = []
+        collectTableViews(in: root, into: &all)
+        guard !all.isEmpty else { return nil }
+        var ancestors = [ObjectIdentifier: Int]()
+        var v: NSView? = nsView; var depth = 0
+        while let cur = v { ancestors[ObjectIdentifier(cur)] = depth; v = cur.superview; depth += 1 }
+        var best: NSTableView? = nil; var bestDist = Int.max
+        for tv in all {
+            var u: NSView? = tv; var d = 0
+            while let cur = u {
+                if let ad = ancestors[ObjectIdentifier(cur)] {
+                    let total = d + ad
+                    if total < bestDist { bestDist = total; best = tv }
+                    break
+                }
+                u = cur.superview; d += 1
+            }
+        }
+        return best
+    }
+
+    private static func collectTableViews(in view: NSView, into result: inout [NSTableView]) {
+        if let tv = view as? NSTableView { result.append(tv); return }
+        for sub in view.subviews { collectTableViews(in: sub, into: &result) }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject {
+        var onDoubleClick: ((FileItem) -> Void)?
+        var items: [FileItem] = []
+        weak var tableView: NSTableView?
+        var eventMonitor: Any?
+
+        @objc func rowDoubleClicked(_ sender: NSTableView) {
+            let row = sender.clickedRow
+            guard row >= 0, row < items.count else { return }
+            onDoubleClick?(items[row])
+        }
+
+        func handleMouseDown(event: NSEvent) {
+            guard let tv = tableView else { return }
+            let location = tv.convert(event.locationInWindow, from: nil)
+            let row = tv.row(at: location)
+            guard row >= 0 else { return }
+
+            // 더블클릭: .onDrag가 mouseDown을 캡처해 doubleAction이 안 울리므로 직접 처리
+            if event.clickCount == 2 {
+                guard row < items.count else { return }
+                onDoubleClick?(items[row])
+                return
+            }
+
+            // 단일클릭: .onDrag가 mouseDown을 가로채므로 NSTableView에 직접 선택 강제
+            let flags = event.modifierFlags
+            if flags.contains(.command) {
+                var sel = tv.selectedRowIndexes
+                if sel.contains(row) { sel.remove(row) } else { sel.insert(row) }
+                tv.selectRowIndexes(sel, byExtendingSelection: false)
+            } else if flags.contains(.shift), let anchor = tv.selectedRowIndexes.first {
+                let range = min(anchor, row)...max(anchor, row)
+                tv.selectRowIndexes(IndexSet(range), byExtendingSelection: false)
+            } else if tv.selectedRowIndexes.contains(row) {
+                // 이미 선택된 row 클릭 → selection 유지 (드래그 시작 가능성)
+                return
+            } else {
+                tv.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            }
+        }
+    }
+}
+
+// MARK: - ContentShape 조건부 적용
+// 선택된 행: Rectangle()로 전체 너비(여백 포함) 히트테스트 → 어디서든 드래그 가능
+// 미선택 행: contentShape 없음 → 텍스트/아이콘 영역만 히트테스트 → 여백은 드래그 불가
+private struct ContentShapeIfSelected: ViewModifier {
+    let selected: Bool
+    func body(content: Content) -> some View {
+        if selected {
+            content.contentShape(Rectangle())
+        } else {
+            content
+        }
+    }
+}
 
 #Preview("빈 패널") {
     let vm = AppViewModel()
