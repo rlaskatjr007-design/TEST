@@ -6,6 +6,7 @@ class PanelState: ObservableObject, Identifiable {
     @Published var currentURL: URL?
     @Published var items: [FileItem] = []
     @Published var selectedIDs: Set<UUID> = []
+    @Published var loadError: String? = nil
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
 
@@ -72,14 +73,23 @@ class PanelState: ObservableObject, Identifiable {
     private func loadContents() {
         guard let url = currentURL else {
             items = []
+            loadError = nil
             return
         }
 
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: Self.resourceKeys,
-            options: .skipsHiddenFiles
-        ) else { return }
+        let contents: [URL]
+        do {
+            contents = try FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: Self.resourceKeys,
+                options: .skipsHiddenFiles
+            )
+            loadError = nil
+        } catch {
+            items = []
+            loadError = error.localizedDescription
+            return
+        }
 
         items = contents.compactMap { fileURL -> FileItem? in
             let rv = try? fileURL.resourceValues(forKeys: Set(Self.resourceKeys))

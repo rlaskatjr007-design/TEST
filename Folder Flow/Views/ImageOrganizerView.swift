@@ -55,8 +55,9 @@ struct ImageOrganizerView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     folderSection
                     if vm.selectedFolder != nil { optionSection }
-                    if !vm.previewGroups.isEmpty { organizeSection }
-                    if let msg = vm.completionMessage { completionBanner(msg) }
+                    if vm.canUndo || !vm.previewGroups.isEmpty {
+                        organizeSection
+                    }
                 }
                 .padding(14)
             }
@@ -205,39 +206,64 @@ struct ImageOrganizerView: View {
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            Button {
-                vm.organize()
-            } label: {
-                HStack(spacing: 6) {
-                    if vm.isOrganizing {
-                        ProgressView().controlSize(.small)
+            if vm.canUndo {
+                // 완료 후: 결과 카드
+                VStack(spacing: 10) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text(vm.completionMessage ?? "정리 완료")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.primary)
                     }
-                    Text(vm.isOrganizing ? "정리 중..." : "정리 시작")
-                        .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    HStack(spacing: 8) {
+                        Button {
+                            vm.undo()
+                        } label: {
+                            Label("되돌리기", systemImage: "arrow.uturn.backward")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            vm.organize()
+                        } label: {
+                            Text("다시 정리")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .controlSize(.regular)
                 }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.green.opacity(0.07))
+                        .overlay(RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.green.opacity(0.25), lineWidth: 1))
+                )
+            } else {
+                // 기본: 정리 시작 버튼
+                Button {
+                    vm.organize()
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.isOrganizing {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text(vm.isOrganizing ? "정리 중..." : "정리 시작")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(vm.isOrganizing)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(vm.isOrganizing)
         }
     }
 
-    private func completionBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(.green)
-            Text(message)
-                .font(.subheadline)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.green.opacity(0.1))
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.green.opacity(0.3), lineWidth: 1))
-        )
-    }
 
     // MARK: - Right Panel (Preview)
 

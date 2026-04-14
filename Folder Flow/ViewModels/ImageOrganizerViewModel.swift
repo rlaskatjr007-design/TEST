@@ -33,6 +33,9 @@ class ImageOrganizerViewModel: ObservableObject {
     @Published var previewGroups: [PreviewGroup] = []
     @Published var isOrganizing = false
     @Published var completionMessage: String?
+    @Published private(set) var lastMoves: [(from: URL, to: URL)] = []
+
+    var canUndo: Bool { !lastMoves.isEmpty }
 
     private let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "gif", "heic", "webp"]
 
@@ -45,6 +48,7 @@ class ImageOrganizerViewModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.prompt = "선택"
         if panel.runModal() == .OK, let url = panel.url {
+            if url != selectedFolder { lastMoves = [] }
             selectedFolder = url
             buildPreview()
         }
@@ -55,6 +59,7 @@ class ImageOrganizerViewModel: ObservableObject {
         for url in urls {
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                if url != selectedFolder { lastMoves = [] }
                 selectedFolder = url
                 buildPreview()
                 return
@@ -66,6 +71,7 @@ class ImageOrganizerViewModel: ObservableObject {
         selectedFolder = nil
         previewGroups = []
         completionMessage = nil
+        lastMoves = []
     }
 
     // MARK: - Preview
@@ -132,12 +138,14 @@ class ImageOrganizerViewModel: ObservableObject {
         guard let folder = selectedFolder, !previewGroups.isEmpty else { return }
         isOrganizing = true
         completionMessage = nil
+        lastMoves = []
 
         let fm = FileManager.default
         let groupsToProcess = previewGroups
 
         DispatchQueue.global(qos: .userInitiated).async {
             var movedCount = 0
+            var moves: [(from: URL, to: URL)] = []
 
             for group in groupsToProcess {
                 let dateFolder: URL
@@ -165,13 +173,59 @@ class ImageOrganizerViewModel: ObservableObject {
                     }
                     if (try? fm.moveItem(at: file, to: dest)) != nil {
                         movedCount += 1
+                        moves.append((from: dest, to: file))
                     }
                 }
             }
 
             DispatchQueue.main.async {
                 self.isOrganizing = false
+                self.lastMoves = moves
                 self.completionMessage = "\(movedCount)개 파일을 날짜별로 정리 완료했습니다."
+                self.buildPreview()
+            }
+        }
+    }
+
+    func undo() {
+        let moves = lastMoves
+        let rootFolder = selectedFolder
+        lastMoves = []
+        isOrganizing = true
+        let fm = FileManager.default
+        DispatchQueue.global(qos: .userInitiated).async {
+            var restoredCount = 0
+            var dateFolders = Set<URL>()
+
+            for move in moves {
+                if (try? fm.moveItem(at: move.from, to: move.to)) != nil {
+                    restoredCount += 1
+                    dateFolders.insert(move.from.deletingLastPathComponent())
+                }
+            }
+
+            // 비어있는 날짜 폴더 삭제
+            for folder in dateFolders {
+                let contents = (try? fm.contentsOfDirectory(
+                    at: folder, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
+                )) ?? []
+                guard contents.isEmpty else { continue }
+                try? fm.removeItem(at: folder)
+
+                // 날짜 폴더의 부모(예: 이미지/)도 비어있으면 삭제 (단, 루트 폴더 제외)
+                let parent = folder.deletingLastPathComponent()
+                guard parent != rootFolder else { continue }
+                let parentContents = (try? fm.contentsOfDirectory(
+                    at: parent, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
+                )) ?? []
+                if parentContents.isEmpty {
+                    try? fm.removeItem(at: parent)
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.isOrganizing = false
+                self.completionMessage = "\(restoredCount)개 파일을 원래 위치로 되돌렸습니다."
                 self.buildPreview()
             }
         }

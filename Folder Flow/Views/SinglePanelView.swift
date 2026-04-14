@@ -218,6 +218,8 @@ struct SinglePanelView: View {
     private var panelContent: some View {
         if panel.currentURL == nil {
             emptyPlaceholder
+        } else if let error = panel.loadError {
+            loadErrorView(message: error)
         } else if panel.items.isEmpty {
             emptyFolder
         } else if groupByExtension {
@@ -487,6 +489,21 @@ struct SinglePanelView: View {
         .contextMenu {
             backgroundContextMenuContent
         }
+    }
+
+    private func loadErrorView(message: String) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 44)).foregroundColor(.orange)
+            Text("폴더를 열 수 없습니다").font(.headline).foregroundColor(.primary)
+            Text(message)
+                .font(.caption).foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 20)
+            Button("다시 시도") { panel.refresh() }
+                .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Activation

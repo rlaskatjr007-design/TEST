@@ -47,6 +47,9 @@ class FileRenamerViewModel: ObservableObject {
     @Published var completionMessage: String?
     @Published var showDuplicateAlert = false
     @Published var focusedItemID: UUID? = nil
+    @Published private(set) var lastRenames: [(from: URL, to: URL)] = []
+
+    var canUndo: Bool { !lastRenames.isEmpty }
 
     // 모드 B에서 중복 최종파일명(이름+확장자)을 가진 항목의 ID 집합
     // 현재 편집 중인 항목(focusedItemID)은 포커스를 벗어나기 전까지 비교에서 제외
@@ -93,11 +96,14 @@ class FileRenamerViewModel: ObservableObject {
         folderURL = url
         let contents = (try? FileManager.default.contentsOfDirectory(
             at: url,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         )) ?? []
         let files = contents
-            .filter { !$0.hasDirectoryPath }
+            .filter { fileURL in
+                let isDir = (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                return !isDir
+            }
             .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
         items = files.map { RenameItem(url: $0, customName: $0.deletingPathExtension().lastPathComponent) }
         completionMessage = nil
@@ -137,17 +143,37 @@ class FileRenamerViewModel: ObservableObject {
             showDuplicateAlert = true
             return
         }
+        lastRenames = []
         let fm = FileManager.default
+        var renames: [(from: URL, to: URL)] = []
         for item in items {
             let newName = previewName(for: item)
             guard newName != item.url.lastPathComponent else { continue }
             let newURL = item.url.deletingLastPathComponent().appendingPathComponent(newName)
-            try? fm.moveItem(at: item.url, to: newURL)
+            if (try? fm.moveItem(at: item.url, to: newURL)) != nil {
+                renames.append((from: newURL, to: item.url))
+            }
         }
+        lastRenames = renames
         if let folder = folderURL {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.loadFolder(folder)
                 self.completionMessage = "이름 변경 완료!"
+            }
+        }
+    }
+
+    func undo() {
+        let renames = lastRenames
+        lastRenames = []
+        let fm = FileManager.default
+        for rename in renames {
+            try? fm.moveItem(at: rename.from, to: rename.to)
+        }
+        if let folder = folderURL {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.loadFolder(folder)
+                self.completionMessage = "이름 변경을 되돌렸습니다."
             }
         }
     }

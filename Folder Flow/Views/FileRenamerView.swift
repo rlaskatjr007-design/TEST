@@ -20,16 +20,9 @@ struct FileRenamerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
             for provider in providers {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                    var url: URL?
-                    if let data = item as? Data {
-                        url = URL(dataRepresentation: data, relativeTo: nil)
-                    } else if let u = item as? URL {
-                        url = u
-                    }
-                    if let url = url {
-                        DispatchQueue.main.async { self.vm.handleDrop(urls: [url]) }
-                    }
+                _ = provider.loadObject(ofClass: NSURL.self) { object, _ in
+                    guard let url = object as? URL else { return }
+                    DispatchQueue.main.async { self.vm.handleDrop(urls: [url]) }
                 }
             }
             return true
@@ -537,6 +530,14 @@ struct FileRenamerView: View {
 
     private var saveButtons: some View {
         HStack(spacing: 10) {
+            if vm.canUndo {
+                Button {
+                    vm.undo()
+                } label: {
+                    Label("되돌리기", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(.bordered)
+            }
             Spacer()
             Button("별도 저장") {
                 vm.saveAsCopy()
